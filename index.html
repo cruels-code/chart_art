@@ -176,7 +176,16 @@
             height: 100%;
             object-fit: fill;
             image-rendering: pixelated;
-            filter: url(#quantize-filter);
+        }
+
+        #hud-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 20;
         }
 
         /* CONTROLS & SIDE PANEL */
@@ -614,19 +623,6 @@
                 text-shadow: 1px -2px 0 rgba(0,0,0,0.4), -1px 1px 0 rgba(0,0,0,0.4);
                 transform: skew(0deg);
             }
-        #active-effect-display {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-family: var(--font-mono);
-            font-size: 0.65rem;
-            color: #888888;
-            letter-spacing: 0.25em;
-            z-index: 10000;
-            pointer-events: none;
-            text-shadow: 0 0 4px rgba(0,0,0,0.8);
-            text-transform: uppercase;
         }
     </style>
 </head>
@@ -658,22 +654,9 @@
     <main>
         <div class="canvas-container" id="canvas-frame">
             <canvas id="skyline-canvas"></canvas>
+            <canvas id="hud-canvas"></canvas>
         </div>
     </main>
-
-    <!-- SVG filter for strict 16-shade grayscale quantization -->
-    <svg width="0" height="0" style="position: absolute; width: 0; height: 0; overflow: hidden;">
-      <filter id="quantize-filter" color-interpolation-filters="sRGB">
-        <feComponentTransfer>
-          <feFuncR type="discrete" tableValues="0 0.0667 0.1333 0.2 0.2667 0.3333 0.4 0.4667 0.5333 0.6 0.6667 0.7333 0.8 0.8667 0.9333 1" />
-          <feFuncG type="discrete" tableValues="0 0.0667 0.1333 0.2 0.2667 0.3333 0.4 0.4667 0.5333 0.6 0.6667 0.7333 0.8 0.8667 0.9333 1" />
-          <feFuncB type="discrete" tableValues="0 0.0667 0.1333 0.2 0.2667 0.3333 0.4 0.4667 0.5333 0.6 0.6667 0.7333 0.8 0.8667 0.9333 1" />
-        </feComponentTransfer>
-      </filter>
-    </svg>
-
-    <!-- HUD display for the active transition effect -->
-    <div id="active-effect-display">EFFECT: IDLE</div>
 
     <!-- CONTROLS & TRASH TRAY -->
     <button class="controls-trigger" id="panel-toggle">
@@ -822,6 +805,12 @@
         let RENDER_HEIGHT = window.innerHeight;
         canvas.width = RENDER_WIDTH;
         canvas.height = RENDER_HEIGHT;
+
+        // Overlay canvas for clean text rendering completely independent of WebGL
+        const hudCanvas = document.getElementById('hud-canvas');
+        const hCtx = hudCanvas.getContext('2d');
+        hudCanvas.width = RENDER_WIDTH;
+        hudCanvas.height = RENDER_HEIGHT;
 
         // Offscreen Canvas for Drawing Clean Static City components before WebGL processing
         const offscreenCanvas = document.createElement('canvas');
@@ -1098,8 +1087,8 @@
         let showControlsMenu = false;
         let controlsOpacity = 0.0;
         let currentDataSource = 'Binance API'; // Global variable to store active data source
-        let currentPalette = 0; // 0 = Price Colors (green up / red down), 1 = 8-bit Mono Cycle
-        const PALETTE_NAMES = ['PRICE', '8BIT'];
+        let currentPalette = 0; // 0 = Price Colors, 1 = 8-bit Mono Cycle, 2 = Inverted Emboss
+        const PALETTE_NAMES = ['PRICE', '8BIT', 'INV_EMBOSS'];
 
         canvas.addEventListener('mouseenter', () => {
             isMouseOver = true;
@@ -1226,11 +1215,11 @@
             // Check if the controls menu is open and the click was on the data source link
             if (showControlsMenu && currentDataSource !== 'Generated/offline') {
                 const coords = getCanvasCoords(e);
-                oCtx.save();
-                oCtx.font = "15px 'VT323', monospace";
+                hCtx.save();
+                hCtx.font = "15px 'VT323', monospace";
                 const linkText = currentDataSource === 'Coinbase API' ? 'api.exchange.coinbase.com' : 'api.binance.com';
-                const linkW = oCtx.measureText(linkText).width;
-                oCtx.restore();
+                const linkW = hCtx.measureText(linkText).width;
+                hCtx.restore();
                 
                 const menuLeftX = RENDER_WIDTH * 0.05;
                 const menuTopY = RENDER_HEIGHT * 0.05;
@@ -1253,11 +1242,11 @@
         window.addEventListener('mousemove', (e) => {
             if (showControlsMenu && currentDataSource !== 'Generated/offline') {
                 const coords = getCanvasCoords(e);
-                oCtx.save();
-                oCtx.font = "15px 'VT323', monospace";
+                hCtx.save();
+                hCtx.font = "15px 'VT323', monospace";
                 const linkText = currentDataSource === 'Coinbase API' ? 'api.exchange.coinbase.com' : 'api.binance.com';
-                const linkW = oCtx.measureText(linkText).width;
-                oCtx.restore();
+                const linkW = hCtx.measureText(linkText).width;
+                hCtx.restore();
                 
                 const menuLeftX = RENDER_WIDTH * 0.05;
                 const menuTopY = RENDER_HEIGHT * 0.05;
@@ -1290,6 +1279,13 @@
                     }
                     b.cachedCanvas = null; // Force redraw with new palette
                 });
+                
+                // Clear feedback texture when switching out of monochrome mode 
+                // to prevent old frames from ghosting immediately on switch.
+                if (currentPalette === 0) {
+                    gl.bindTexture(gl.TEXTURE_2D, u_feedbackTexture);
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, RENDER_WIDTH, RENDER_HEIGHT, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                }
             }
         });
 
@@ -1300,6 +1296,8 @@
             
             canvas.width = RENDER_WIDTH;
             canvas.height = RENDER_HEIGHT;
+            hudCanvas.width = RENDER_WIDTH;
+            hudCanvas.height = RENDER_HEIGHT;
             offscreenCanvas.width = RENDER_WIDTH;
             offscreenCanvas.height = RENDER_HEIGHT;
             
@@ -1904,18 +1902,6 @@
 
         // Render clean, static city components to offscreenCanvas and upload to GPU
         function renderCity() {
-            // Update HUD and Controls menu opacities for smooth fading
-            if (isMouseOver) {
-                hudOpacity = Math.min(0.8, hudOpacity + 0.05);
-            } else {
-                hudOpacity = Math.max(0.0, hudOpacity - 0.05);
-            }
-            if (showControlsMenu) {
-                controlsOpacity = Math.min(0.8, controlsOpacity + 0.05);
-            } else {
-                controlsOpacity = Math.max(0.0, controlsOpacity - 0.05);
-            }
-
             oCtx.fillStyle = '#000000'; // Solid black background
             oCtx.fillRect(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
             
@@ -1939,28 +1925,48 @@
             }
             oCtx.globalCompositeOperation = 'source-over';
             
+            // Upload static canvas state to WebGL texture u_cityTexture
+            updateTextureFromCanvas(gl, u_cityTexture, offscreenCanvas);
+        }
+
+        // Draw HUD overlay separately from WebGL processing
+        function renderHUD() {
+            // Update HUD and Controls menu opacities for smooth fading
+            if (isMouseOver) {
+                hudOpacity = Math.min(0.8, hudOpacity + 0.05);
+            } else {
+                hudOpacity = Math.max(0.0, hudOpacity - 0.05);
+            }
+            if (showControlsMenu) {
+                controlsOpacity = Math.min(0.8, controlsOpacity + 0.05);
+            } else {
+                controlsOpacity = Math.max(0.0, controlsOpacity - 0.05);
+            }
+
+            hCtx.clearRect(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
+            
             // Draw HUD text on mouse hover with fade transition
             if (hudOpacity > 0.001) {
-                oCtx.save();
-                oCtx.globalAlpha = hudOpacity;
-                oCtx.font = "15px 'VT323', monospace";
-                oCtx.fillStyle = "#ffffff";
-                oCtx.textBaseline = "bottom";
+                hCtx.save();
+                hCtx.globalAlpha = hudOpacity;
+                hCtx.font = "15px 'VT323', monospace";
+                hCtx.fillStyle = "#ffffff";
+                hCtx.textBaseline = "bottom";
 
                 const hudY = RENDER_HEIGHT - (RENDER_HEIGHT * 0.05); // 5% bottom buffer
                 const hudLeftX = RENDER_WIDTH * 0.05; // 5% left buffer
                 const hudRightX = RENDER_WIDTH * 0.95; // 5% right buffer
 
                 // 1. Draw update interval bottom-left
-                oCtx.textAlign = "left";
-                oCtx.fillText("UPDATE INTERVAL: 30S", hudLeftX, hudY);
+                hCtx.textAlign = "left";
+                hCtx.fillText("UPDATE INTERVAL: 30S", hudLeftX, hudY);
 
                 // 3. Draw crypto token name in bottom middle
-                oCtx.textAlign = "center";
+                hCtx.textAlign = "center";
                 let tokenName = "BITCOIN (BTC)";
                 if (currentCrypto === 'ETH') tokenName = "ETHEREUM (ETH)";
                 else if (currentCrypto === 'XTZ') tokenName = "TEZOS (XTZ)";
-                oCtx.fillText(tokenName, RENDER_WIDTH * 0.5, hudY);
+                hCtx.fillText(tokenName, RENDER_WIDTH * 0.5, hudY);
 
                 // 2. Draw price on the far bottom right
                 if (btcCandles.length > 0) {
@@ -1968,31 +1974,31 @@
                     const priceVal = lastCandle.close;
                     const priceText = "$" + priceVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                     
-                    oCtx.textAlign = "right";
-                    oCtx.fillText(priceText, hudRightX, hudY);
+                    hCtx.textAlign = "right";
+                    hCtx.fillText(priceText, hudRightX, hudY);
                 }
-                oCtx.restore();
+                hCtx.restore();
             }
 
             // Draw Controls Menu in top-left with fade transition
             if (controlsOpacity > 0.001) {
-                oCtx.save();
-                oCtx.globalAlpha = controlsOpacity;
-                oCtx.font = "15px 'VT323', monospace";
-                oCtx.fillStyle = "#ffffff";
-                oCtx.textBaseline = "top";
-                oCtx.textAlign = "left";
+                hCtx.save();
+                hCtx.globalAlpha = controlsOpacity;
+                hCtx.font = "15px 'VT323', monospace";
+                hCtx.fillStyle = "#ffffff";
+                hCtx.textBaseline = "top";
+                hCtx.textAlign = "left";
 
                 const menuLeftX = RENDER_WIDTH * 0.05; // 5% left buffer
                 const menuTopY = RENDER_HEIGHT * 0.05; // 5% top buffer
 
-                oCtx.fillText("Controls:", menuLeftX, menuTopY);
-                oCtx.fillText("(b) BTC", menuLeftX, menuTopY + 25);
-                oCtx.fillText("(e) ETH", menuLeftX, menuTopY + 45);
-                oCtx.fillText("(x) XTZ", menuLeftX, menuTopY + 65);
-                oCtx.fillText("(c) Cycle Palette: " + PALETTE_NAMES[currentPalette], menuLeftX, menuTopY + 85);
+                hCtx.fillText("Controls:", menuLeftX, menuTopY);
+                hCtx.fillText("(b) BTC", menuLeftX, menuTopY + 25);
+                hCtx.fillText("(e) ETH", menuLeftX, menuTopY + 45);
+                hCtx.fillText("(x) XTZ", menuLeftX, menuTopY + 65);
+                hCtx.fillText("(c) Cycle Palette: " + PALETTE_NAMES[currentPalette], menuLeftX, menuTopY + 85);
 
-                oCtx.fillText("Data Source:", menuLeftX, menuTopY + 110);
+                hCtx.fillText("Data Source:", menuLeftX, menuTopY + 110);
                 
                 let linkText = "Generated/offline";
                 let isLink = false;
@@ -2005,18 +2011,15 @@
                 }
 
                 if (isLink) {
-                    const linkW = oCtx.measureText(linkText).width;
-                    oCtx.fillText(linkText, menuLeftX, menuTopY + 130);
-                    oCtx.fillRect(menuLeftX, menuTopY + 146, linkW, 1);
+                    const linkW = hCtx.measureText(linkText).width;
+                    hCtx.fillText(linkText, menuLeftX, menuTopY + 130);
+                    hCtx.fillRect(menuLeftX, menuTopY + 146, linkW, 1);
                 } else {
-                    oCtx.fillText(linkText, menuLeftX, menuTopY + 130);
+                    hCtx.fillText(linkText, menuLeftX, menuTopY + 130);
                 }
 
-                oCtx.restore();
+                hCtx.restore();
             }
-            
-            // Upload static canvas state to WebGL texture u_cityTexture
-            updateTextureFromCanvas(gl, u_cityTexture, offscreenCanvas);
         }
 
         // Initiate a horizontal sweep that melts and reform buildings shape-by-shape from left to right
@@ -2554,17 +2557,20 @@
         uniform float u_tearing;
         uniform float u_noise;
         uniform float u_scanlines;
-        uniform int   u_paletteMode;  // 0 = price colors, 1 = 8-bit mono per-pixel cycle
+        uniform int   u_paletteMode;  // 0 = price colors, 1 = 8-bit mono per-pixel cycle, 2 = invert emboss
         uniform vec2  u_resolution;   // screen size in pixels
 
         float rand(vec2 co) {
             return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
         }
 
+        float isBldg(sampler2D tex, vec2 uv, vec2 offset) {
+            vec3 smp = texture(tex, uv - offset).rgb;
+            return dot(smp, vec3(0.333)) > 0.02 ? 1.0 : 0.0;
+        }
+
         void main() {
             vec2 uv = v_texCoord;
-            
-            // 1. MIRROR TOP HALF TO BOTTOM HALF (Reflection disabled)
             
             // 2. APPLY HORIZONTAL TEARING GLITCH
             if (u_tearing > 0.01) {
@@ -2585,48 +2591,75 @@
                 currentColor = abs(currentColor - particle.rgb);
             }
 
-            // 3b. GREYSCALE TWINKLE MODE: each pixel flickers independently at a random rate
-            if (u_paletteMode == 1) {
-                // Snap UV to integer pixel grid — gives a stable, noise-free per-pixel identity
+            // 3b. GREYSCALE TWINKLE & INVERTED EMBOSS MODE
+            if (u_paletteMode >= 1) {
+                // Snap UV to integer pixel grid for stable pixel identity
                 vec2 pixelCoord = floor(uv * u_resolution);
 
-                // Unique seed for this pixel, consistent across frames
-                float seed = rand(pixelCoord * 0.0137 + vec2(0.3713, 0.7591));
+                float seed = rand(pixelCoord);
+                float speed = 1.0 + seed * 3.0; // Random speed
+                float phase = seed * 6.2831853; // Random phase
 
-                // Each pixel twinkles at its own rate between ~2 Hz and ~15 Hz
-                float tickRate  = 2.0 + seed * 13.0;
+                // Smooth sine wave mapped perfectly to [0.0, 1.0]
+                float brightness = sin(u_time * speed + phase) * 0.5 + 0.5;
 
-                // Quantise time to that rate — the pixel holds a brightness until next tick
-                float quantTime = floor(u_time * tickRate);
-
-                // Roll a fresh random brightness at each tick using a compound hash
-                // (mixing quantTime and pixelCoord avoids visible banding/repetition)
-                float r1 = rand(vec2(quantTime * 0.1731 + seed * 7.3, pixelCoord.x * 0.0097));
-                float r2 = rand(vec2(pixelCoord.y * 0.0073 + seed,    quantTime * 0.0531));
-                float raw = fract(r1 + r2);           // 0..1, fresh each tick
-
-                // Gamma bias towards bright values (sqrt pushes the distribution brighter)
-                float brightness = sqrt(raw);
-
-                // HDR push — values >1 become blown-out white, <0.15 become true black
-                // This creates the contrast between dim and "hot" pixels
-                brightness = (brightness - 0.15) * 2.8;
-
-                // Only replace building pixels (luma guard keeps black bg untouched)
                 float luma = dot(currentColor, vec3(0.299, 0.587, 0.114));
-                if (luma > 0.02) {
-                    currentColor = vec3(brightness);
+                
+                if (u_paletteMode == 2) {
+                    // Emboss calculation
+                    vec2 texel = 1.0 / u_resolution;
+                    
+                    vec3 s1 = texture(u_cityTexture, uv - texel).rgb;
+                    float l1 = dot(s1, vec3(0.333));
+                    
+                    vec3 s2 = texture(u_cityTexture, uv + texel).rgb;
+                    float l2 = dot(s2, vec3(0.333));
+                    
+                    float embossDelta = (l1 - l2) * 2.5; // boosted emboss strength
+
+                    if (luma > 0.02) {
+                        // Mix base twinkling with grey base and emboss highlights/shadows
+                        currentColor = vec3(brightness * 0.5 + 0.5 + embossDelta);
+                    } else {
+                        // Background area: generate 10px photoshop-style soft drop shadow
+                        vec2 shadowOff = vec2(10.0, -10.0) / u_resolution;
+                        float s = 0.0;
+                        vec2 t1 = 2.0 / u_resolution;
+                        
+                        s += isBldg(u_cityTexture, uv, shadowOff) * 1.0;
+                        s += isBldg(u_cityTexture, uv, shadowOff - vec2(t1.x, 0.0)) * 0.6;
+                        s += isBldg(u_cityTexture, uv, shadowOff + vec2(t1.x, 0.0)) * 0.6;
+                        s += isBldg(u_cityTexture, uv, shadowOff - vec2(0.0, t1.y)) * 0.6;
+                        s += isBldg(u_cityTexture, uv, shadowOff + vec2(0.0, t1.y)) * 0.6;
+                        
+                        s = clamp(s / 2.5, 0.0, 1.0);
+                        
+                        // Set to light grey (will invert to dark drop shadow)
+                        currentColor = vec3(s * 0.7);
+                    }
+                } else {
+                    if (luma > 0.02) {
+                        currentColor = vec3(brightness);
+                    }
                 }
             }
             
             // 4. APPLY STRONG TEMPORAL FEEDBACK LOOP (Trails/ghosting)
-            // Disabled in greyscale twinkle mode — feedback smears the per-pixel flicker
-            vec4 prevFrame = texture(u_feedbackTexture, uv);
-            vec3 color = (u_paletteMode == 1) ? currentColor : mix(currentColor, prevFrame.rgb, 0.45);
+            // Disabled completely in greyscale twinkle modes to preserve performance and avoid smearing
+            vec3 color = currentColor;
+            if (u_paletteMode == 0) {
+                vec4 prevFrame = texture(u_feedbackTexture, uv);
+                color = mix(currentColor, prevFrame.rgb, 0.45);
+                
+                // 5. SIMULATE HDR / BLOOM BRIGHTNESS BOOST
+                color = color * 1.5;
+                color = clamp(color, 0.0, 1.0);
+            }
             
-            // 5. SIMULATE HDR / BLOOM BRIGHTNESS BOOST
-            color = color * 1.5;
-            color = clamp(color, 0.0, 1.0);
+            // Invert output for palette mode 2
+            if (u_paletteMode == 2) {
+                color = 1.0 - color;
+            }
             
             // 6. APPLY CRT MICRO-SCANLINE
             if (u_scanlines > 0.01) {
@@ -2640,10 +2673,18 @@
                 color += vec3(grain);
             }
             
-            // 8. STRICT 16-SHADE COLOR QUANTIZATION
-            color.r = floor(color.r * 15.0 + 0.5) / 15.0;
-            color.g = floor(color.g * 15.0 + 0.5) / 15.0;
-            color.b = floor(color.b * 15.0 + 0.5) / 15.0;
+            // 8. COLOR QUANTIZATION
+            if (u_paletteMode >= 1) {
+                // 8-bit grey level (256 shades) for smooth twinkling and emboss
+                color.r = floor(color.r * 255.0 + 0.5) / 255.0;
+                color.g = floor(color.g * 255.0 + 0.5) / 255.0;
+                color.b = floor(color.b * 255.0 + 0.5) / 255.0;
+            } else {
+                // STRICT 16-SHADE for standard price colors
+                color.r = floor(color.r * 15.0 + 0.5) / 15.0;
+                color.g = floor(color.g * 15.0 + 0.5) / 15.0;
+                color.b = floor(color.b * 15.0 + 0.5) / 15.0;
+            }
             
             fragColor = vec4(color, 1.0);
         }`;
@@ -2787,8 +2828,11 @@
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
             // Copy backbuffer to feedback texture for the next frame's temporal feedback loop
-            gl.bindTexture(gl.TEXTURE_2D, u_feedbackTexture);
-            gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, RENDER_WIDTH, RENDER_HEIGHT, 0);
+            // Optimization: completely bypass doing this heavy GPU copy when we are in monochrome mode
+            if (currentPalette === 0) {
+                gl.bindTexture(gl.TEXTURE_2D, u_feedbackTexture);
+                gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, RENDER_WIDTH, RENDER_HEIGHT, 0);
+            }
         }
 
         // CONTINUOUS ANIMATION LOOP (Runs always for color cycling)
@@ -2834,22 +2878,9 @@
 
             // Draw WebGL Scene
             drawWebGLScene();
-
-            // Update Active Effect HUD Display (shows combined effect names when dual effects are active)
-            const meltingBuildings = activeCity.buildings.filter(b => b.transitionState === 'MELTING');
-            const activeEffectNames = new Set();
-            meltingBuildings.forEach(b => {
-                const effs = b.transitionEffects || [b.transitionEffect];
-                effs.forEach(e => { if (e !== undefined) activeEffectNames.add(EFFECT_NAMES[e]); });
-            });
-            const displayDiv = document.getElementById('active-effect-display');
-            if (displayDiv) {
-                if (activeEffectNames.size > 0) {
-                    displayDiv.innerText = "EFFECT: " + [...activeEffectNames].join(" // ");
-                } else {
-                    displayDiv.innerText = "EFFECT: IDLE";
-                }
-            }
+            
+            // Draw clean HUD overlay on top of WebGL canvas
+            renderHUD();
 
             requestAnimationFrame(loop);
         }
